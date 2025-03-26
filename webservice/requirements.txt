@@ -1,5 +1,7 @@
-fastapi
+fastapi[standard]==0.115.12
 uvicorn
 sqlalchemy
 psycopg2-binary
-
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+requests
