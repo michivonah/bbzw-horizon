@@ -1,0 +1,25 @@
+FROM python:3.12
+
+# Create directory
+RUN mkdir app
+WORKDIR /app/
+
+# Copy files
+COPY requirements.txt .
+
+# Set enviromental variables
+ENV DB_CONNECTION_STRING ep-plannerDB
+
+# Install needed packages
+RUN pip3 install --upgrade pip
+RUN pip3 install pipenv
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port
+EXPOSE 8080
+
+# Imort script
+COPY webservice.py .
+
+# Start app
+CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8080"]
