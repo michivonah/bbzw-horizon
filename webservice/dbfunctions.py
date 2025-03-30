@@ -1,35 +1,23 @@
-import psycopg2
-from psycopg2.extras import execute_values
 import os
+from sqlmodel import create_engine, Session
 from dotenv import load_dotenv
+from models import SensorData, Client
 
+# Lade Umgebungsvariablen
 load_dotenv()
+DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING", "postgresql://user:password@localhost/sensordb")
 
-# Create a database connection
-def connectDatabase():
-    conn = psycopg2.connect(
-        host=os.getenv('DBHOST'),
-        database=os.getenv('DBNAME'),
-        user=os.getenv('DBUSER'),
-        password=os.getenv('DBPASSWORD'),
-        port=os.getenv('DBPORT'),)
-    conn.autocommit = True
-    cursor = conn.cursor()
-    return cursor
+# SQLAlchemy Setup
+engine = create_engine(DB_CONNECTION_STRING, echo=True)
 
-# Execute database query
-def executeQuery(query):
-    conn = connectDatabase()
-    conn.execute(query)
-    result = conn.fetchall()
-    return result
+# Funktion zum Speichern von Sensordaten
+def save_sensor_data(db: Session, sensor_data: SensorData):
+    db.add(sensor_data)  # Das Pydantic-Modell kann direkt hinzugefügt werden
+    db.commit()
+    db.refresh(sensor_data)  # Holt die letzten Informationen des hinzugefügten Eintrags
+    return sensor_data
 
-# Execute database query without fetching data
-def executeWithoutFetch(query):
-    conn = connectDatabase()
-    conn.execute(query)
-    return None
-
-def bulkInsert(query, data):
-    conn = connectDatabase()
-    return execute_values(conn, query, data)
+# dbfunctions.py
+def get_client_id_by_name(db: Session, client_name: str):
+    client = db.query(Client).filter(Client.name == client_name).first()
+    return client.id if client else None  # Gibt die clientid zurück oder None, wenn nicht gefunden

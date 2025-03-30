@@ -1,47 +1,60 @@
 # Webservice
 # INP21b - Timo Weber & Michael von Ah
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import psycopg2
-import dbfunctions as db
-import requests, secrets, hashlib, re, string, random, os
-from datetime import datetime, timedelta, date, time
-import json
-from datetime import datetime
+################ IMPORTS ################
+from fastapi import FastAPI, Depends, HTTPException
+from sqlmodel import Session
+from dbfunctions import save_sensor_data, get_client_id_by_name, engine
+from models import SensorDataIn, SensorData, MessageOnly 
+ 
 
-DATABASE_URL = os.getenv("DB_CONNECTION_STRING", "postgresql://user:password@localhost/sensordb")
-
-""" class apiFunctions:
-    def __init__(self) -> None:
-        self.alternativeImage = "https://cdn.ep.neodym.dev/media/20240505-halloween.jpeg"
-
-    def getAttractionList(self):
-        query = 'SELECT "name", "id", "imageurl", "description" FROM "attraction" ORDER BY "name";'
-        attractions = db.executeQuery(query)
-        if attractions:
-            return attractions
-        else:
-            raise Exception("Cannot generate list of attractions. Request invalid") """
-        
-
-#### API ####
+################ API ################
 app = FastAPI(
-    title="M241-M245-BBZW-Horizion",
+    title="M241-M245-BBZW-Horizon",
     description="BBZW-Horizon",
     summary="BBZW-Horizon",
     version="0.0.1"
 )
 
-class Session(BaseModel):
-    username: str = None
-    token: str = None
-    message: str = None
-    timestamp: datetime = datetime.now()
-
-@app.post("/account/new-session", tags=["account"])
-async def initNewSessionApi(username: str, password: str) -> Session:
+# DB Session
+def get_db():
+    db = Session(bind=engine)
     try:
-        return Session(username="username", token="sessionToken", message="Session initiated successfully")
+        yield db
+    finally:
+        db.close()
+
+# class Session(BaseModel):
+#     username: str = None
+#     token: str = None
+#     message: str = None
+#     timestamp: datetime = datetime.now()
+
+
+
+
+# @app.post("/account/new-session", tags=["account"])
+# async def initNewSessionApi(username: str, password: str) -> Session:
+#     try:
+#         return Session(username="username", token="sessionToken", message="Session initiated successfully")
+#     except Exception as error:
+#         raise HTTPException(status_code=401, detail=f"{error}")
+    
+@app.post("/sensors/push-data", response_model=MessageOnly, tags=["sensors"])
+async def saveNewSensorData(token: str, client: str, data: SensorDataIn, db: Session = Depends(get_db)):
+    try:
+        # Ermittle die clientid basierend auf dem Client-Namen
+        client_id = get_client_id_by_name(db, client)
+        if client_id is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Erstelle ein SensorData-Objekt für die Datenbank
+        sensor_data = SensorData(**data.dict())
+        sensor_data.clientid = client_id  # Setze die clientid aus der DB
+
+        # Speichern der Sensordaten in der Datenbank
+        save_sensor_data(db, sensor_data)
+        
+        return MessageOnly(message="Sensor data saved successfully.")
     except Exception as error:
-        raise HTTPException(status_code=401, detail=f"{error}")
+        raise HTTPException(status_code=500, detail=str(error))
