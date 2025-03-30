@@ -2,9 +2,9 @@
 # INP21b - Timo Weber & Michael von Ah
 
 ################ IMPORTS ################
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from sqlmodel import Session
-from dbfunctions import save_sensor_data, get_client_id_by_name, engine
+from dbfunctions import save_sensor_data, get_client_id_by_name, validate_token, engine
 from models import SensorDataIn, SensorData, MessageOnly 
  
 
@@ -24,25 +24,18 @@ def get_db():
     finally:
         db.close()
 
-# class Session(BaseModel):
-#     username: str = None
-#     token: str = None
-#     message: str = None
-#     timestamp: datetime = datetime.now()
+def authenticate_user(token: str, db: Session = Depends(get_db)):
+    if not validate_token(db, token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-
-
-
-# @app.post("/account/new-session", tags=["account"])
-# async def initNewSessionApi(username: str, password: str) -> Session:
-#     try:
-#         return Session(username="username", token="sessionToken", message="Session initiated successfully")
-#     except Exception as error:
-#         raise HTTPException(status_code=401, detail=f"{error}")
     
 @app.post("/sensors/push-data", response_model=MessageOnly, tags=["sensors"])
-async def saveNewSensorData(token: str, client: str, data: SensorDataIn, db: Session = Depends(get_db)):
+async def saveNewSensorData(client: str, data: SensorDataIn, token: str = Header(...), db: Session = Depends(get_db)):
     try:
+        # Token-Validierung
+        if not validate_token(db, token):
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
         # Ermittle die clientid basierend auf dem Client-Namen
         client_id = get_client_id_by_name(db, client)
         if client_id is None:
@@ -54,7 +47,7 @@ async def saveNewSensorData(token: str, client: str, data: SensorDataIn, db: Ses
 
         # Speichern der Sensordaten in der Datenbank
         save_sensor_data(db, sensor_data)
-        
+
         return MessageOnly(message="Sensor data saved successfully.")
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))

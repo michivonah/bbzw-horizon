@@ -2,6 +2,9 @@ import os
 from sqlmodel import create_engine, Session
 from dotenv import load_dotenv
 from models import SensorData, Client
+from models import Session as SessionModel
+from datetime import datetime
+
 
 # Lade Umgebungsvariablen
 load_dotenv()
@@ -21,3 +24,9 @@ def save_sensor_data(db: Session, sensor_data: SensorData):
 def get_client_id_by_name(db: Session, client_name: str):
     client = db.query(Client).filter(Client.name == client_name).first()
     return client.id if client else None  # Gibt die clientid zurück oder None, wenn nicht gefunden
+
+def validate_token(db: Session, token: str) -> bool:
+    session = db.query(SessionModel).filter(SessionModel.token == token).first()
+    if not session:
+        return False
+    return session.validuntil >= datetime.now().date()  # Überprüfe, ob das Token gültig ist

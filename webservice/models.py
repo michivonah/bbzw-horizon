@@ -7,6 +7,21 @@ class MessageOnly(BaseModel):
     message: str
     timestamp: datetime = Field(default_factory=datetime.now)
 
+class User(SQLModel, table=True):
+    __tablename__ = "user"
+    id: int = Field(default=None, primary_key=True)
+    name: str = Field(max_length=50)
+    mail: str = Field(max_length=150)
+    password: str = Field(max_length=250)
+    api_access: bool = Field(default=False)
+
+class Session(SQLModel, table=True):
+    __tablename__ = "sessions"
+    id: int = Field(default=None, primary_key=True)
+    token: str = Field(max_length=96)
+    validuntil: datetime  # Verwende datetime hier
+    userid: int = Field(foreign_key="user.id")  # Foreign Key auf User
+
 class Client(SQLModel, table=True):
     __tablename__ = "clients"  # Definiere den Tabellennamen für Clients
     id: int = Field(default=None, primary_key=True)
