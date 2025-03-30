@@ -4,7 +4,7 @@
 ################ IMPORTS ################
 from fastapi import FastAPI, Depends, HTTPException, Header
 from sqlmodel import Session
-from dbfunctions import save_sensor_data, get_client_id_by_name, validate_token, engine
+from dbfunctions import save_sensor_data, get_client_id_by_name, validate_token_with_access, engine
 from models import SensorDataIn, SensorData, MessageOnly 
  
 
@@ -24,18 +24,19 @@ def get_db():
     finally:
         db.close()
 
-def authenticate_user(token: str, db: Session = Depends(get_db)):
-    if not validate_token(db, token):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+def authenticate_user(token: str = Header(...), db: Session = Depends(get_db)):  # Token aus Header
+    if not validate_token_with_access(db, token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token, or insufficient permissions")
 
     
 @app.post("/sensors/push-data", response_model=MessageOnly, tags=["sensors"])
-async def saveNewSensorData(client: str, data: SensorDataIn, token: str = Header(...), db: Session = Depends(get_db)):
+async def saveNewSensorData(
+    client: str,
+    data: SensorDataIn,
+    db: Session = Depends(get_db),
+    auth: bool = Depends(authenticate_user)  # Hier wird das Token durch die Dependency validiert
+):
     try:
-        # Token-Validierung
-        if not validate_token(db, token):
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-
         # Ermittle die clientid basierend auf dem Client-Namen
         client_id = get_client_id_by_name(db, client)
         if client_id is None:
