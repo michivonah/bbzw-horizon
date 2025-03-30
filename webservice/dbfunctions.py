@@ -51,3 +51,9 @@ def check_api_access(db: Session, token: str) -> bool:
 
     # Überprüfe, ob api_access True ist
     return user.api_access if user else False  # Gibt True oder False zurück
+
+def save_token_to_db(db: Session, token: str, user_id: int, valid_until: datetime):
+    new_session = SessionModel(token=token, validuntil=valid_until, userid=user_id)
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)

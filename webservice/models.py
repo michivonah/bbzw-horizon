@@ -7,6 +7,10 @@ class MessageOnly(BaseModel):
     message: str
     timestamp: datetime = Field(default_factory=datetime.now)
 
+class TokenResponse(BaseModel):
+    token: str
+    validuntil: datetime
+
 class User(SQLModel, table=True):
     __tablename__ = "user"
     id: int = Field(default=None, primary_key=True)
