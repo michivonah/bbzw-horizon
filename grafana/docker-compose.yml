@@ -1,0 +1,11 @@
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_DATABASE_TYPE=sqlite3
+      - GF_DATABASE_SQLITE3_PATH=/var/lib/grafana/grafana.db
+    volumes:
+      - ./grafana-data:/var/lib/grafana
+    restart: unless-stopped

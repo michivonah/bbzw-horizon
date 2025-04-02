@@ -8,7 +8,7 @@ WORKDIR /app/
 COPY requirements.txt .
 
 # Set enviromental variables
-ENV DB_CONNECTION_STRING ep-plannerDB
+ENV DB_CONNECTION_STRING=ep-plannerDB
 
 # Install needed packages
 RUN pip3 install --upgrade pip
@@ -20,6 +20,9 @@ EXPOSE 8080
 
 # Imort script
 COPY webservice.py .
+COPY crypto.py .
+COPY dbfunctions.py .
+COPY models.py .
 
 # Start app
 CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8080"]
