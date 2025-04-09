@@ -2,13 +2,12 @@
 # INP21b - Timo Weber & Michael von Ah
 
 ################ IMPORTS ################
-from fastapi import FastAPI, Depends, HTTPException, Header, Body
+from fastapi import FastAPI, Depends, HTTPException, Header, Body, Query
 from sqlmodel import Session
-from dbfunctions import save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db
+from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data
 from models import SensorDataIn, SensorData, MessageOnly, User, TokenResponse, Session as SessionModel
 from datetime import datetime, timedelta
-from crypto import hash_password, generate_new_token
- 
+from crypto import hash_password, generate_new_token 
 
 ################ API ################
 app = FastAPI(
@@ -82,3 +81,34 @@ async def generate_token(
 
     # Rückgabe des Tokens und des Ablaufdatums
     return TokenResponse(token=new_token, validuntil=valid_until)
+
+@app.get("/sensors/recent-data", response_model=List[SensorData], tags=["sensors"])
+async def get_recent_sensor_data_endpoint(
+    client: str,
+    token: str = Header(...),  # Token aus dem Header lesen
+    end_date: Optional[datetime] = Query(None),  # Optionales Datum-Parameter
+    db: Session = Depends(get_db)
+):
+    # Authentifiziere den Benutzer
+    if not validate_token_with_access(db, token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token, or insufficient permissions")
+
+    # Ermittle die clientid basierend auf dem Client-Namen
+    client_id = get_client_id_by_name(db, client)
+    if client_id is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Setze den end_date auf heute, falls keiner übergeben wird
+    if end_date is None:
+        end_date = datetime.now()
+
+    # Berechne den Startzeitpunkt (24 Stunden vor dem end_date)
+    start_time = end_date - timedelta(days=1)
+
+    # Hole die Sensordaten im angegebenen Zeitraum
+    recent_data = get_recent_sensor_data(db, client_id, start_time, end_date)
+
+    if not recent_data:
+        raise HTTPException(status_code=404, detail="No sensor data found in the specified time range.")
+
+    return recent_data  # Rückgabe als JSON

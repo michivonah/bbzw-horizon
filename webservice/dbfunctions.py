@@ -2,7 +2,8 @@ import os
 from sqlmodel import create_engine, Session
 from dotenv import load_dotenv
 from models import User, SensorData, Client, Session as SessionModel
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import List, Optional
 
 
 # Lade Umgebungsvariablen
@@ -11,6 +12,13 @@ DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING", "postgresql://user:pass
 
 # SQLAlchemy Setup
 engine = create_engine(DB_CONNECTION_STRING, echo=True)
+
+def get_db():
+    db = Session(bind=engine)
+    try:
+        yield db
+    finally:
+        db.close()
 
 # Funktion zum Speichern von Sensordaten
 def save_sensor_data(db: Session, sensor_data: SensorData):
@@ -57,3 +65,10 @@ def save_token_to_db(db: Session, token: str, user_id: int, valid_until: datetim
     db.add(new_session)
     db.commit()
     db.refresh(new_session)
+
+def get_recent_sensor_data(db: Session, client_id: int, start_date: datetime, end_date: datetime) -> List[SensorData]:
+    return db.query(SensorData).filter(
+        SensorData.timestamp >= start_date,
+        SensorData.timestamp < end_date,  # Das end_date sollte exklusiv sein
+        SensorData.clientid == client_id
+    ).all()
