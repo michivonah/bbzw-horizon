@@ -7,14 +7,14 @@ from sqlmodel import Session
 from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data
 from models import SensorDataIn, SensorData, MessageOnly, User, TokenResponse, Session as SessionModel
 from datetime import datetime, timedelta
-from crypto import hash_password, generate_new_token 
+from crypto import hash_password, generate_new_token
 
 ################ API ################
 app = FastAPI(
     title="BBZW-Horizon",
     description="BBZW-Horizon ist ein Tool, welches entwickelt wurde, um durch die Erfassung und Auswertung von Luftqualitätsmesswerten die Luftqualität in den Schulzimmern des BBZW Sursee zu verbessern. Bei dieser API handelt es sich um die Kommunikationsschnittstelle, zwischen den Arduinos, welche mit Sensoren die Daten erfassen und an die API senden. Diese API speichert die Daten dann in der Datenbank, damit diese durch das Frontend abgerufen und visualisiert werden können.",
     summary="Die BBZW-Horizon API dient als Kommunikationsschnittstelle, um Luftqualitätsmesswerte von Arduinos, die mit Sensoren ausgestattet sind, zu erfassen",
-    version="0.0.2"
+    version="0.0.3"
 )
 
 # DB Session
@@ -82,11 +82,12 @@ async def generate_token(
     # Rückgabe des Tokens und des Ablaufdatums
     return TokenResponse(token=new_token, validuntil=valid_until)
 
-@app.get("/sensors/recent-data", response_model=List[SensorData], tags=["sensors"])
+@app.get("/sensors/get-data", response_model=List[SensorData], tags=["sensors"])
 async def get_recent_sensor_data_endpoint(
     client: str,
     token: str = Header(...),  # Token aus dem Header lesen
-    end_date: Optional[datetime] = Query(None),  # Optionales Datum-Parameter
+    start_date: Optional[datetime] = Query(None),  # Optionales Startdatum
+    end_date: Optional[datetime] = Query(None),  # Optionales Enddatum
     db: Session = Depends(get_db)
 ):
     # Authentifiziere den Benutzer
@@ -98,15 +99,16 @@ async def get_recent_sensor_data_endpoint(
     if client_id is None:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # Setze den end_date auf heute, falls keiner übergeben wird
+    # Setze das end_date auf heute, falls keines übergeben wird
     if end_date is None:
         end_date = datetime.now()
 
-    # Berechne den Startzeitpunkt (24 Stunden vor dem end_date)
-    start_time = end_date - timedelta(days=1)
+    # Setze das start_date auf 24 Stunden vor dem end_date, falls keines übergeben wird
+    if start_date is None:
+        start_date = end_date - timedelta(days=1)
 
     # Hole die Sensordaten im angegebenen Zeitraum
-    recent_data = get_recent_sensor_data(db, client_id, start_time, end_date)
+    recent_data = get_recent_sensor_data(db, client_id, start_date, end_date)
 
     if not recent_data:
         raise HTTPException(status_code=404, detail="No sensor data found in the specified time range.")
