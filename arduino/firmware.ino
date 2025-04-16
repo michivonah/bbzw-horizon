@@ -6,15 +6,15 @@
 #include <NTPClient.h>
 
 // WLAN-Zugangsdaten
-#define SSID "INF-LAB"
-#define PASSWORT "INF-LAB@BBZW-2024"
+#define SSID ""
+#define PASSWORT ""
 
 // API-Konfiguration
-#define API_HOST "172.18.14.32"
+#define API_HOST ""
 #define API_PORT 8080
 #define API_ENDPOINT "/sensors/push-data"
-#define CLIENT_ID "1.54"
-#define API_TOKEN "test2"
+#define CLIENT_ID ""
+#define API_TOKEN ""
 
 // Sensor & Netzwerk
 Bsec iaqSensor;
