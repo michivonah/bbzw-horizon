@@ -6,15 +6,15 @@
 #include <NTPClient.h>
 
 // WLAN-Zugangsdaten
-#define SSID ""
-#define PASSWORT ""
+#define SSID "INF-LAB"
+#define PASSWORT "INF-LAB@BBZW-2024"
 
 // API-Konfiguration
-#define API_HOST ""
+#define API_HOST "172.18.14.32"
 #define API_PORT 8080
 #define API_ENDPOINT "/sensors/push-data"
-#define CLIENT_ID ""
-#define API_TOKEN ""
+#define CLIENT_ID "1.54"
+#define API_TOKEN "test2"
 
 // Sensor & Netzwerk
 Bsec iaqSensor;
@@ -29,7 +29,20 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 // Sendeintervall
 unsigned long sendInterval = 30000;
 
-// Werte begrenzen (nur für sensible Werte wie Temp, Feuchte, VOC, Gas)
+// Fehlercode per LED ausgeben (Morse-artig)
+void errorBlink(int code) {
+  while (true) {
+    for (int i = 0; i < code; i++) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+    }
+    delay(1000); // Pause zwischen Zyklen
+  }
+}
+
+// Werte begrenzen
 float clampValue(float val) {
   if (val >= 1000.0) return 999.999;
   if (val <= -1000.0) return -999.999;
@@ -81,24 +94,40 @@ String getTimestamp() {
   return String(buf);
 }
 
-void setup() {
-  Serial.begin(115200);
-  while (!Serial);
+// API-Health-Check
+bool checkApiHealth() {
+  HttpClient healthClient = HttpClient(wifi, API_HOST, API_PORT);
+  healthClient.get("/health");
+  int statusCode = healthClient.responseStatusCode();
+  healthClient.stop();
+  return statusCode == 200;
+}
 
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
+  // WLAN verbinden mit Timeout
   WiFi.begin(SSID, PASSWORT);
-  Serial.print("Verbinde mit WLAN...");
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 20000) {
     delay(500);
-    Serial.print(".");
   }
-  Serial.println("\nWLAN verbunden!");
+  if (WiFi.status() != WL_CONNECTED) {
+    errorBlink(1); // Fehlercode 1: WLAN-Fehler
+  }
+
+  // API-Healthcheck
+  if (!checkApiHealth()) {
+    errorBlink(4); // Fehlercode 4: API nicht erreichbar
+  }
 
   Wire.begin();
 
-  // Automatische Adresserkennung
-  bool sensorFound = false;
-  byte sensorAddress;
+  // Automatische Sensor-Erkennung
+  byte sensorAddress = 0;
   byte possibleAddresses[] = {0x76, 0x77};
+  bool sensorFound = false;
   for (int i = 0; i < 2; i++) {
     byte addr = possibleAddresses[i];
     Wire.beginTransmission(addr);
@@ -110,18 +139,12 @@ void setup() {
   }
 
   if (!sensorFound) {
-    Serial.println("Kein BME680 gefunden!");
-    while (1);
+    errorBlink(2); // Fehlercode 2: Sensor nicht gefunden
   }
 
-  Serial.print("BME680 gefunden bei I2C-Adresse 0x");
-  Serial.println(sensorAddress, HEX);
   iaqSensor.begin(sensorAddress, Wire);
-
   if (iaqSensor.bsecStatus != BSEC_OK) {
-    Serial.print("BSEC Status Fehler: ");
-    Serial.println(iaqSensor.bsecStatus);
-    while (1);
+    errorBlink(3); // Fehlercode 3: Sensor-Init fehlgeschlagen
   }
 
   bsec_virtual_sensor_t sensorList[] = {
@@ -137,41 +160,35 @@ void setup() {
   while (!timeClient.update()) {
     timeClient.forceUpdate();
   }
+
+  digitalWrite(LED_BUILTIN, HIGH); // Alles bereit – LED dauerhaft an
 }
 
 void loop() {
   if (iaqSensor.run()) {
+    // Kurzes LED-Blink zur Messanzeige
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+
     float temperature = clampValue(iaqSensor.temperature);
     float humidity = clampValue(iaqSensor.humidity);
     float voc = clampValue(iaqSensor.iaq);
     float gas = clampValue(iaqSensor.gasResistance / 1000.0);
-    float pressure = iaqSensor.pressure / 100.0; // <-- Kein Clamping hier!
+    float pressure = iaqSensor.pressure / 100.0;
 
     String timestamp = getTimestamp();
 
-    // Debug-Ausgabe
-    Serial.println("Messwerte:");
-    Serial.println("Temp: " + String(temperature));
-    Serial.println("Feuchte: " + String(humidity));
-    Serial.println("Druck: " + String(pressure));
-    Serial.println("VOC/IAQ: " + String(voc));
-    Serial.println("Gas: " + String(gas));
-    Serial.println("Zeit: " + timestamp);
-
-    // JSON erstellen
     String payload = "{";
     payload += "\"timestamp\": \"" + timestamp + "\",";
     payload += "\"temperature\": " + String(temperature, 3) + ",";
     payload += "\"humidity\": " + String(humidity, 3) + ",";
-    payload += "\"pressure\": " + String(pressure, 3) + ","; // unverfälscht
+    payload += "\"pressure\": " + String(pressure, 3) + ",";
     payload += "\"voc\": " + String(voc, 3) + ",";
     payload += "\"gas\": " + String(gas, 3);
     payload += "}";
 
     String fullPath = String(API_ENDPOINT) + "?client=" + CLIENT_ID;
-
-    Serial.println("Sende an API:");
-    Serial.println(payload);
 
     client.beginRequest();
     client.post(fullPath);
@@ -182,15 +199,8 @@ void loop() {
     client.print(payload);
     client.endRequest();
 
-    int statusCode = client.responseStatusCode();
-    String response = client.responseBody();
-
-    Serial.print("Status: ");
-    Serial.println(statusCode);
-    Serial.print("Antwort: ");
-    Serial.println(response);
-  } else {
-    Serial.println("Noch keine gültigen Daten von BSEC.");
+    client.responseStatusCode();
+    client.responseBody();
   }
 
   delay(sendInterval);
