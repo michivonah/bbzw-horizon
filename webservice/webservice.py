@@ -14,7 +14,7 @@ app = FastAPI(
     title="BBZW-Horizon",
     description="BBZW-Horizon ist ein Tool, welches entwickelt wurde, um durch die Erfassung und Auswertung von Luftqualitätsmesswerten die Luftqualität in den Schulzimmern des BBZW Sursee zu verbessern. Bei dieser API handelt es sich um die Kommunikationsschnittstelle, zwischen den Arduinos, welche mit Sensoren die Daten erfassen und an die API senden. Diese API speichert die Daten dann in der Datenbank, damit diese durch das Frontend abgerufen und visualisiert werden können.",
     summary="Die BBZW-Horizon API dient als Kommunikationsschnittstelle, um Luftqualitätsmesswerte von Arduinos, die mit Sensoren ausgestattet sind, zu erfassen",
-    version="0.0.3"
+    version="0.0.4"
 )
 
 # DB Session
@@ -114,3 +114,8 @@ async def get_recent_sensor_data_endpoint(
         raise HTTPException(status_code=404, detail="No sensor data found in the specified time range.")
 
     return recent_data  # Rückgabe als JSON
+
+@app.get("/health", response_model=MessageOnly, tags=["health"])
+async def health_check():
+    """Einfacher Healthcheck-Endpoint, der 'OK' zurückgibt."""
+    return MessageOnly(message="OK")
