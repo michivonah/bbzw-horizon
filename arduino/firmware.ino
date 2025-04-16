@@ -1,97 +1,197 @@
 #include <WiFiNINA.h>
 #include <Wire.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME680.h>
+#include "bsec.h"
+#include <ArduinoHttpClient.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
+// WLAN-Zugangsdaten
 #define SSID ""
 #define PASSWORT ""
-#define API_HOST ""  // Deine API-Domain
-#define API_ENDPOINT "/sensor-data/"  // API-Endpunkt
-#define API_PORT 8080  // Falls HTTPS, dann 443
-#define CLIENT_ID "1.54"  // Eindeutige ID für den Arduino
-#define API_TOKEN "test2"  // Setze hier dein API-Token
 
-Adafruit_BME680 bme;
-WiFiClient client;
+// API-Konfiguration
+#define API_HOST ""
+#define API_PORT 8080
+#define API_ENDPOINT "/sensors/push-data"
+#define CLIENT_ID ""
+#define API_TOKEN ""
+
+// Sensor & Netzwerk
+Bsec iaqSensor;
+WiFiClient wifi;
+HttpClient client = HttpClient(wifi, API_HOST, API_PORT);
+
+// NTP-Client
+WiFiUDP ntpUDP;
+const long utcOffsetInSeconds = 0;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+// Sendeintervall
+unsigned long sendInterval = 30000;
+
+// Werte begrenzen (nur für sensible Werte wie Temp, Feuchte, VOC, Gas)
+float clampValue(float val) {
+  if (val >= 1000.0) return 999.999;
+  if (val <= -1000.0) return -999.999;
+  return val;
+}
+
+// ISO-Zeitstempel generieren
+String getTimestamp() {
+  timeClient.update();
+  unsigned long epochTime = timeClient.getEpochTime();
+  int year = 1970;
+  unsigned long seconds = epochTime;
+
+  while (true) {
+    bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    int daysInYear = leap ? 366 : 365;
+    if (seconds >= daysInYear * 86400UL) {
+      seconds -= daysInYear * 86400UL;
+      year++;
+    } else {
+      break;
+    }
+  }
+
+  int month = 1;
+  const int daysInMonth[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  while (month <= 12) {
+    int dim = daysInMonth[month - 1];
+    if (month == 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) {
+      dim = 29;
+    }
+    if (seconds >= dim * 86400UL) {
+      seconds -= dim * 86400UL;
+      month++;
+    } else {
+      break;
+    }
+  }
+
+  int day = seconds / 86400UL + 1;
+  seconds = seconds % 86400UL;
+  int hour = seconds / 3600UL;
+  seconds = seconds % 3600UL;
+  int minute = seconds / 60UL;
+  int second = seconds % 60UL;
+
+  char buf[30];
+  sprintf(buf, "%04d-%02d-%02dT%02d:%02d:%02dZ", year, month, day, hour, minute, second);
+  return String(buf);
+}
 
 void setup() {
-    Serial.begin(115200);
-    while (!Serial);
+  Serial.begin(115200);
+  while (!Serial);
 
-    if (WiFi.status() == WL_NO_MODULE) {
-        Serial.println("WiFi-Modul nicht gefunden!");
-        while (1);
+  WiFi.begin(SSID, PASSWORT);
+  Serial.print("Verbinde mit WLAN...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWLAN verbunden!");
+
+  Wire.begin();
+
+  // Automatische Adresserkennung
+  bool sensorFound = false;
+  byte sensorAddress;
+  byte possibleAddresses[] = {0x76, 0x77};
+  for (int i = 0; i < 2; i++) {
+    byte addr = possibleAddresses[i];
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      sensorAddress = addr;
+      sensorFound = true;
+      break;
     }
+  }
 
-    WiFi.begin(SSID, PASSWORT);
-    Serial.print("Verbinde mit WLAN...");
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("\nWLAN verbunden!");
+  if (!sensorFound) {
+    Serial.println("Kein BME680 gefunden!");
+    while (1);
+  }
 
-    if (!bme.begin()) {
-        Serial.println("BME680 nicht gefunden!");
-        while (1);
-    }
+  Serial.print("BME680 gefunden bei I2C-Adresse 0x");
+  Serial.println(sensorAddress, HEX);
+  iaqSensor.begin(sensorAddress, Wire);
 
-    bme.setTemperatureOversampling(BME680_OS_8X);
-    bme.setHumidityOversampling(BME680_OS_2X);
-    bme.setPressureOversampling(BME680_OS_4X);
-    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-    bme.setGasHeater(320, 150);
+  if (iaqSensor.bsecStatus != BSEC_OK) {
+    Serial.print("BSEC Status Fehler: ");
+    Serial.println(iaqSensor.bsecStatus);
+    while (1);
+  }
+
+  bsec_virtual_sensor_t sensorList[] = {
+    BSEC_OUTPUT_IAQ,
+    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
+    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
+    BSEC_OUTPUT_RAW_PRESSURE,
+    BSEC_OUTPUT_RAW_GAS
+  };
+  iaqSensor.updateSubscription(sensorList, 5, BSEC_SAMPLE_RATE_LP);
+
+  timeClient.begin();
+  while (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
 }
 
 void loop() {
-    if (!bme.performReading()) {
-        Serial.println("Fehler beim Auslesen des BME680!");
-        return;
-    }
+  if (iaqSensor.run()) {
+    float temperature = clampValue(iaqSensor.temperature);
+    float humidity = clampValue(iaqSensor.humidity);
+    float voc = clampValue(iaqSensor.iaq);
+    float gas = clampValue(iaqSensor.gasResistance / 1000.0);
+    float pressure = iaqSensor.pressure / 100.0; // <-- Kein Clamping hier!
 
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Sende Daten an API...");
+    String timestamp = getTimestamp();
 
-        String jsonPayload = "{";
-        jsonPayload += "\"token\": \"" + String(API_TOKEN) + "\",";
-        jsonPayload += "\"clientid\": \"" + String(CLIENT_ID) + "\",";
-        jsonPayload += "\"temperature\": " + String(bme.temperature) + ",";
-        jsonPayload += "\"humidity\": " + String(bme.humidity) + ",";
-        jsonPayload += "\"pressure\": " + String(bme.pressure / 100.0) + ",";
-        jsonPayload += "\"voc\": " + String(0.0) + ","; // Falls VOC nicht gemessen wird
-        jsonPayload += "\"gas\": " + String(bme.gas_resistance / 1000.0);
-        jsonPayload += "}";
+    // Debug-Ausgabe
+    Serial.println("Messwerte:");
+    Serial.println("Temp: " + String(temperature));
+    Serial.println("Feuchte: " + String(humidity));
+    Serial.println("Druck: " + String(pressure));
+    Serial.println("VOC/IAQ: " + String(voc));
+    Serial.println("Gas: " + String(gas));
+    Serial.println("Zeit: " + timestamp);
 
-        if (client.connect(API_HOST, API_PORT)) {  // Falls HTTPS genutzt wird, dann WiFiSSLClient
-            client.println("POST " + String(API_ENDPOINT) + " HTTP/1.1");
-            client.println("Host: " + String(API_HOST));
-            client.println("Content-Type: application/json");
-            client.print("Content-Length: ");
-            client.println(jsonPayload.length());
-            client.println();
-            client.println(jsonPayload);
+    // JSON erstellen
+    String payload = "{";
+    payload += "\"timestamp\": \"" + timestamp + "\",";
+    payload += "\"temperature\": " + String(temperature, 3) + ",";
+    payload += "\"humidity\": " + String(humidity, 3) + ",";
+    payload += "\"pressure\": " + String(pressure, 3) + ","; // unverfälscht
+    payload += "\"voc\": " + String(voc, 3) + ",";
+    payload += "\"gas\": " + String(gas, 3);
+    payload += "}";
 
-            unsigned long timeout = millis() + 5000; // Wartezeit für die Antwort
-            while (client.available() == 0) {
-                if (millis() > timeout) {
-                    Serial.println("Timeout bei API-Antwort!");
-                    client.stop();
-                    return;
-                }
-            }
+    String fullPath = String(API_ENDPOINT) + "?client=" + CLIENT_ID;
 
-            while (client.available()) {
-                String response = client.readString();
-                Serial.println("API Antwort: " + response);
-            }
-        } else {
-            Serial.println("Fehler beim Verbinden mit API!");
-        }
+    Serial.println("Sende an API:");
+    Serial.println(payload);
 
-        client.stop();
-    } else {
-        Serial.println("WLAN nicht verbunden!");
-    }
+    client.beginRequest();
+    client.post(fullPath);
+    client.sendHeader("Content-Type", "application/json");
+    client.sendHeader("token", API_TOKEN);
+    client.sendHeader("Content-Length", payload.length());
+    client.beginBody();
+    client.print(payload);
+    client.endRequest();
 
-    delay(5000);
+    int statusCode = client.responseStatusCode();
+    String response = client.responseBody();
+
+    Serial.print("Status: ");
+    Serial.println(statusCode);
+    Serial.print("Antwort: ");
+    Serial.println(response);
+  } else {
+    Serial.println("Noch keine gültigen Daten von BSEC.");
+  }
+
+  delay(sendInterval);
 }
