@@ -3,6 +3,7 @@
 
 ################ IMPORTS ################
 from fastapi import FastAPI, Depends, HTTPException, Header, Body, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data, get_all_clients
 from models import SensorDataIn, SensorData, MessageOnly, User, Client, ClientCreate, TokenResponse, Session as SessionModel
@@ -14,7 +15,20 @@ app = FastAPI(
     title="BBZW-Horizon",
     description="BBZW-Horizon ist ein Tool, welches entwickelt wurde, um durch die Erfassung und Auswertung von Luftqualitätsmesswerten die Luftqualität in den Schulzimmern des BBZW Sursee zu verbessern. Bei dieser API handelt es sich um die Kommunikationsschnittstelle, zwischen den Arduinos, welche mit Sensoren die Daten erfassen und an die API senden. Diese API speichert die Daten dann in der Datenbank, damit diese durch das Frontend abgerufen und visualisiert werden können.",
     summary="Die BBZW-Horizon API dient als Kommunikationsschnittstelle, um Luftqualitätsmesswerte von Arduinos, die mit Sensoren ausgestattet sind, zu erfassen",
-    version="0.0.5"
+    version="0.0.6"
+)
+
+# CORS
+origins = [
+    "*",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # DB Session

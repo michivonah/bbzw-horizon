@@ -23,8 +23,8 @@ COPY webservice.py .
 COPY crypto.py .
 COPY dbfunctions.py .
 COPY models.py .
-COPY certs/key.pem .
-COPY certs/cert.pem .
+COPY certs/server.key .
+COPY certs/server.crt .
 
 # Start app
-CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8443", "--ssl-keyfile=key.pem", "--ssl-certfile=cert.pem"]
+CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8443", "--ssl-keyfile=server.key", "--ssl-certfile=server.crt"]

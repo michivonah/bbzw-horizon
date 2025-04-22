@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17.4
+    restart: unless-stopped
+    volumes:
+      - ./db:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=bbzw-horizon
+      - POSTGRES_DB=bbzw-horizon
+      - POSTGRES_PASSWORD=<PW>
+
+
+  webservice-inp21b:
+    build:
+      dockerfile: Dockerfile
+      context: /app/webservice-inp21b
+    restart: unless-stopped
+    ports:
+      - 8080:8080
+    environment:
+      - DB_CONNECTION_STRING=postgresql://bbzw-horizon:<PW>@db/bbzw-horizon
+
+  frontend:
+    build:
+      dockerfile: Dockerfile
+      context: /app/frontend
+    restart: unless-stopped
+    ports:
+      - 5173:5173
+
+  grafana-inp21b:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_DATABASE_TYPE=sqlite3
+      - GF_DATABASE_SQLITE3_PATH=/var/lib/grafana/grafana.db
+    volumes:
+      - ./grafana-inp21b:/var/lib/grafana
+    restart: unless-stopped
+    user: 0:0
+
