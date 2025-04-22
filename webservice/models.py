@@ -31,6 +31,9 @@ class Client(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     name: str = Field(max_length=50)  # Stelle sicher, dass der Name der DB-Struktur entspricht
 
+class ClientCreate(BaseModel):
+    name: str = Field(max_length=50)
+
 class SensorDataIn(BaseModel):  # Klasse für den Input (d.h., die API-Dokumentation)
     timestamp: datetime = Field(default_factory=datetime.now)
     temperature: float = Field(default=None, nullable=True)

@@ -4,8 +4,8 @@
 ################ IMPORTS ################
 from fastapi import FastAPI, Depends, HTTPException, Header, Body, Query
 from sqlmodel import Session
-from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data
-from models import SensorDataIn, SensorData, MessageOnly, User, TokenResponse, Session as SessionModel
+from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data, get_all_clients
+from models import SensorDataIn, SensorData, MessageOnly, User, Client, ClientCreate, TokenResponse, Session as SessionModel
 from datetime import datetime, timedelta
 from crypto import hash_password, generate_new_token
 
@@ -14,7 +14,7 @@ app = FastAPI(
     title="BBZW-Horizon",
     description="BBZW-Horizon ist ein Tool, welches entwickelt wurde, um durch die Erfassung und Auswertung von Luftqualitätsmesswerten die Luftqualität in den Schulzimmern des BBZW Sursee zu verbessern. Bei dieser API handelt es sich um die Kommunikationsschnittstelle, zwischen den Arduinos, welche mit Sensoren die Daten erfassen und an die API senden. Diese API speichert die Daten dann in der Datenbank, damit diese durch das Frontend abgerufen und visualisiert werden können.",
     summary="Die BBZW-Horizon API dient als Kommunikationsschnittstelle, um Luftqualitätsmesswerte von Arduinos, die mit Sensoren ausgestattet sind, zu erfassen",
-    version="0.0.4"
+    version="0.0.5"
 )
 
 # DB Session
@@ -82,6 +82,21 @@ async def generate_token(
     # Rückgabe des Tokens und des Ablaufdatums
     return TokenResponse(token=new_token, validuntil=valid_until)
 
+@app.delete("/user/close-session", response_model=MessageOnly, tags=["auth"])
+async def logout_user(token: str = Header(...), db: Session = Depends(get_db)):
+    # Überprüfe nur, ob das Token vorhanden ist
+    session = db.query(SessionModel).filter(SessionModel.token == token).first()
+
+    # Wenn die Sitzung nicht gefunden wird, ist der Zugriff verweigert
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Lösche die Sitzung
+    db.delete(session)
+    db.commit()
+
+    return MessageOnly(message="Successfully logged out.")
+
 @app.get("/sensors/get-data", response_model=List[SensorData], tags=["sensors"])
 async def get_recent_sensor_data_endpoint(
     client: str,
@@ -91,8 +106,11 @@ async def get_recent_sensor_data_endpoint(
     db: Session = Depends(get_db)
 ):
     # Authentifiziere den Benutzer
-    if not validate_token_with_access(db, token):
-        raise HTTPException(status_code=401, detail="Invalid or expired token, or insufficient permissions")
+    session = db.query(SessionModel).filter(SessionModel.token == token).first()
+    
+    # Überprüfe, ob das Token gültig ist
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     # Ermittle die clientid basierend auf dem Client-Namen
     client_id = get_client_id_by_name(db, client)
@@ -119,3 +137,42 @@ async def get_recent_sensor_data_endpoint(
 async def health_check():
     """Einfacher Healthcheck-Endpoint, der 'OK' zurückgibt."""
     return MessageOnly(message="OK")
+
+@app.get("/clients/get-client", response_model=List[Client], tags=["clients"])
+async def get_clients(
+    token: str = Header(...),  # Token aus dem Header lesen
+    db: Session = Depends(get_db)
+):
+    # Authentifiziere den Benutzer
+    session = db.query(SessionModel).filter(SessionModel.token == token).first()
+    
+    # Überprüfe, ob das Token gültig ist
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Hole alle Clients aus der Datenbank
+    clients = get_all_clients(db)
+    return clients  # Rückgabe als JSON
+
+@app.post("/clients/new-client", response_model=MessageOnly, tags=["clients"])
+async def create_client(
+    client_create: ClientCreate,
+    token: str = Header(...),  # Token aus dem Header lesen
+    db: Session = Depends(get_db)
+):
+    # Authentifiziere den Benutzer
+    if not validate_token_with_access(db, token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token, or insufficient permissions")
+
+    # Überprüfe, ob der Clientname bereits existiert
+    existing_client = db.query(Client).filter(Client.name == client_create.name).first()
+    if existing_client:
+        raise HTTPException(status_code=400, detail="Client with this name already exists")
+
+    # Erstelle den neuen Client
+    new_client = Client(name=client_create.name)
+    db.add(new_client)
+    db.commit()
+    db.refresh(new_client)
+
+    return MessageOnly(message="Client created successfully.")

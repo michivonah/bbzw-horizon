@@ -72,3 +72,6 @@ def get_recent_sensor_data(db: Session, client_id: int, start_date: datetime, en
         SensorData.timestamp < end_date,  # Das end_date sollte exklusiv sein
         SensorData.clientid == client_id
     ).all()
+
+def get_all_clients(db: Session) -> List[Client]:
+    return db.query(Client).all()
