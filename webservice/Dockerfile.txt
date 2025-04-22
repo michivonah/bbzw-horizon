@@ -16,7 +16,7 @@ RUN pip3 install pipenv
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose port
-EXPOSE 8080
+EXPOSE 8443
 
 # Imort script
 COPY webservice.py .
@@ -27,4 +27,4 @@ COPY certs/key.pem .
 COPY certs/cert.pem .
 
 # Start app
-CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8080", "--ssl-keyfile=key.pem", "--ssl-certfile=cert.pem"]
+CMD ["uvicorn", "webservice:app", "--host", "0.0.0.0", "--port", "8443", "--ssl-keyfile=key.pem", "--ssl-certfile=cert.pem"]
