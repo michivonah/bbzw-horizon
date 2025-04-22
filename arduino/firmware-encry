@@ -1,0 +1,246 @@
+#include <WiFiNINA.h>
+#include <Wire.h>
+#include "bsec.h"
+#include <ArduinoHttpClient.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
+#include <Crypto.h>
+#include <AES.h>
+
+// WLAN-Zugangsdaten
+#define SSID ""
+#define PASSWORT ""
+
+// API-Konfiguration
+#define API_HOST ""
+#define API_PORT 8080
+#define API_ENDPOINT "/sensors/push-data-encrypted"
+#define CLIENT_ID ""
+#define API_TOKEN ""
+
+// AES-Schlüssel (128 Bit)
+AES128 aes;
+byte aes_key[] = {
+};
+
+// Base64-Zeichen
+const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// Funktionen für Base64-Encoding
+String base64Encode(byte* data, int len) {
+  String out = "";
+  for (int i = 0; i < len; i += 3) {
+    int val = (data[i] << 16) + (i + 1 < len ? data[i + 1] << 8 : 0) + (i + 2 < len ? data[i + 2] : 0);
+    out += base64_chars[(val >> 18) & 0x3F];
+    out += base64_chars[(val >> 12) & 0x3F];
+    out += (i + 1 < len) ? base64_chars[(val >> 6) & 0x3F] : '=';
+    out += (i + 2 < len) ? base64_chars[val & 0x3F] : '=';
+  }
+  return out;
+}
+
+String padToBlock(String input) {
+  int pad = 16 - (input.length() % 16);
+  for (int i = 0; i < pad; i++) input += '\0';
+  return input;
+}
+
+String encryptAndBase64(String plainText) {
+  String padded = padToBlock(plainText);
+  int len = padded.length();
+  byte plain[len];
+  byte encrypted[len];
+
+  padded.getBytes((unsigned char*)plain, len + 1);
+
+  aes.setKey(aes_key, sizeof(aes_key));
+  for (int i = 0; i < len; i += 16) {
+    aes.encryptBlock(encrypted + i, plain + i);
+  }
+
+  return base64Encode(encrypted, len);
+}
+
+// Sensor & Netzwerk
+Bsec iaqSensor;
+WiFiClient wifi;
+HttpClient client = HttpClient(wifi, API_HOST, API_PORT);
+
+// NTP-Client
+WiFiUDP ntpUDP;
+const long utcOffsetInSeconds = 0;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+// Sendeintervall
+unsigned long sendInterval = 30000;
+
+void errorBlink(int code) {
+  while (true) {
+    for (int i = 0; i < code; i++) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+    }
+    delay(1000);
+  }
+}
+
+float clampValue(float val) {
+  if (val >= 1000.0) return 999.999;
+  if (val <= -1000.0) return -999.999;
+  return val;
+}
+
+String getTimestamp() {
+  timeClient.update();
+  unsigned long epochTime = timeClient.getEpochTime();
+  int year = 1970;
+  unsigned long seconds = epochTime;
+
+  while (true) {
+    bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    int daysInYear = leap ? 366 : 365;
+    if (seconds >= daysInYear * 86400UL) {
+      seconds -= daysInYear * 86400UL;
+      year++;
+    } else break;
+  }
+
+  int month = 1;
+  const int daysInMonth[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  while (month <= 12) {
+    int dim = daysInMonth[month - 1];
+    if (month == 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) dim = 29;
+    if (seconds >= dim * 86400UL) {
+      seconds -= dim * 86400UL;
+      month++;
+    } else break;
+  }
+
+  int day = seconds / 86400UL + 1;
+  seconds = seconds % 86400UL;
+  int hour = seconds / 3600UL;
+  seconds = seconds % 3600UL;
+  int minute = seconds / 60UL;
+  int second = seconds % 60UL;
+
+  char buf[30];
+  sprintf(buf, "%04d-%02d-%02dT%02d:%02d:%02dZ", year, month, day, hour, minute, second);
+  return String(buf);
+}
+
+bool checkApiHealth() {
+  HttpClient healthClient = HttpClient(wifi, API_HOST, API_PORT);
+  healthClient.get("/health");
+  int statusCode = healthClient.responseStatusCode();
+  healthClient.stop();
+  return statusCode == 200;
+}
+
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
+  WiFi.begin(SSID, PASSWORT);
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 20000) {
+    delay(500);
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    errorBlink(1);
+  }
+
+  if (!checkApiHealth()) {
+    errorBlink(4);
+  }
+
+  Wire.begin();
+
+  byte sensorAddress = 0;
+  byte possibleAddresses[] = {0x76, 0x77};
+  bool sensorFound = false;
+  for (int i = 0; i < 2; i++) {
+    byte addr = possibleAddresses[i];
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      sensorAddress = addr;
+      sensorFound = true;
+      break;
+    }
+  }
+
+  if (!sensorFound) {
+    errorBlink(2);
+  }
+
+  iaqSensor.begin(sensorAddress, Wire);
+  if (iaqSensor.bsecStatus != BSEC_OK) {
+    errorBlink(3);
+  }
+
+  bsec_virtual_sensor_t sensorList[] = {
+    BSEC_OUTPUT_IAQ,
+    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
+    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
+    BSEC_OUTPUT_RAW_PRESSURE,
+    BSEC_OUTPUT_RAW_GAS
+  };
+  iaqSensor.updateSubscription(sensorList, 5, BSEC_SAMPLE_RATE_LP);
+
+  timeClient.begin();
+  while (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
+
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void loop() {
+  if (iaqSensor.run()) {
+    float temperature = clampValue(iaqSensor.temperature);
+    float humidity = clampValue(iaqSensor.humidity);
+    float voc = clampValue(iaqSensor.iaq);
+    float gas = clampValue(iaqSensor.gasResistance / 1000.0);
+    float pressure = iaqSensor.pressure / 100.0;
+
+    String timestamp = getTimestamp();
+
+    String jsonPayload = "{";
+    jsonPayload += "\"timestamp\": \"" + timestamp + "\",";
+    jsonPayload += "\"temperature\": " + String(temperature, 3) + ",";
+    jsonPayload += "\"humidity\": " + String(humidity, 3) + ",";
+    jsonPayload += "\"pressure\": " + String(pressure, 3) + ",";
+    jsonPayload += "\"voc\": " + String(voc, 3) + ",";
+    jsonPayload += "\"gas\": " + String(gas, 3);
+    jsonPayload += "}";
+
+    String encryptedPayload = encryptAndBase64(jsonPayload);
+
+    String fullPath = String(API_ENDPOINT) + "?client=" + CLIENT_ID;
+
+    client.beginRequest();
+    client.post(fullPath);
+    client.sendHeader("Content-Type", "text/plain");
+    client.sendHeader("token", API_TOKEN);
+    client.sendHeader("Content-Length", encryptedPayload.length());
+    client.beginBody();
+    client.print(encryptedPayload);
+    client.endRequest();
+
+    int statusCode = client.responseStatusCode();
+    client.responseBody();
+
+    if (statusCode == 200) {
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(100);
+      digitalWrite(LED_BUILTIN, HIGH);
+    }
+
+    if (statusCode < 200 || statusCode >= 300) {
+      digitalWrite(LED_BUILTIN, LOW);
+    }
+  }
+
+  delay(sendInterval);
+}
