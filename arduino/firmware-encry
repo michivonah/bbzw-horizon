@@ -4,8 +4,6 @@
 #include <ArduinoHttpClient.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
-#include <Crypto.h>
-#include <AES.h>
 
 // WLAN-Zugangsdaten
 #define SSID ""
@@ -14,52 +12,12 @@
 // API-Konfiguration
 #define API_HOST ""
 #define API_PORT 8080
-#define API_ENDPOINT "/sensors/push-data-encrypted"
+#define API_ENDPOINT "/sensors/push-data/secure"
 #define CLIENT_ID ""
 #define API_TOKEN ""
 
-// AES-Schlüssel (128 Bit)
-AES128 aes;
-byte aes_key[] = {
-};
-
-// Base64-Zeichen
-const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-// Funktionen für Base64-Encoding
-String base64Encode(byte* data, int len) {
-  String out = "";
-  for (int i = 0; i < len; i += 3) {
-    int val = (data[i] << 16) + (i + 1 < len ? data[i + 1] << 8 : 0) + (i + 2 < len ? data[i + 2] : 0);
-    out += base64_chars[(val >> 18) & 0x3F];
-    out += base64_chars[(val >> 12) & 0x3F];
-    out += (i + 1 < len) ? base64_chars[(val >> 6) & 0x3F] : '=';
-    out += (i + 2 < len) ? base64_chars[val & 0x3F] : '=';
-  }
-  return out;
-}
-
-String padToBlock(String input) {
-  int pad = 16 - (input.length() % 16);
-  for (int i = 0; i < pad; i++) input += '\0';
-  return input;
-}
-
-String encryptAndBase64(String plainText) {
-  String padded = padToBlock(plainText);
-  int len = padded.length();
-  byte plain[len];
-  byte encrypted[len];
-
-  padded.getBytes((unsigned char*)plain, len + 1);
-
-  aes.setKey(aes_key, sizeof(aes_key));
-  for (int i = 0; i < len; i += 16) {
-    aes.encryptBlock(encrypted + i, plain + i);
-  }
-
-  return base64Encode(encrypted, len);
-}
+const String ALPHABET = "";
+const String KEY      = "";
 
 // Sensor & Netzwerk
 Bsec iaqSensor;
@@ -74,6 +32,7 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 // Sendeintervall
 unsigned long sendInterval = 30000;
 
+// Fehlercode per LED ausgeben (Morse-artig)
 void errorBlink(int code) {
   while (true) {
     for (int i = 0; i < code; i++) {
@@ -82,16 +41,18 @@ void errorBlink(int code) {
       digitalWrite(LED_BUILTIN, LOW);
       delay(150);
     }
-    delay(1000);
+    delay(1000); // Pause zwischen Zyklen
   }
 }
 
+// Werte begrenzen
 float clampValue(float val) {
   if (val >= 1000.0) return 999.999;
   if (val <= -1000.0) return -999.999;
   return val;
 }
 
+// ISO-Zeitstempel generieren
 String getTimestamp() {
   timeClient.update();
   unsigned long epochTime = timeClient.getEpochTime();
@@ -104,18 +65,24 @@ String getTimestamp() {
     if (seconds >= daysInYear * 86400UL) {
       seconds -= daysInYear * 86400UL;
       year++;
-    } else break;
+    } else {
+      break;
+    }
   }
 
   int month = 1;
   const int daysInMonth[] = {31,28,31,30,31,30,31,31,30,31,30,31};
   while (month <= 12) {
     int dim = daysInMonth[month - 1];
-    if (month == 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) dim = 29;
+    if (month == 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))) {
+      dim = 29;
+    }
     if (seconds >= dim * 86400UL) {
       seconds -= dim * 86400UL;
       month++;
-    } else break;
+    } else {
+      break;
+    }
   }
 
   int day = seconds / 86400UL + 1;
@@ -130,6 +97,7 @@ String getTimestamp() {
   return String(buf);
 }
 
+// API-Health-Check
 bool checkApiHealth() {
   HttpClient healthClient = HttpClient(wifi, API_HOST, API_PORT);
   healthClient.get("/health");
@@ -138,25 +106,49 @@ bool checkApiHealth() {
   return statusCode == 200;
 }
 
+// Funktion zum Substituieren (Verschlüsseln) eines Strings
+String substituteString(String input, String alphabet, String key) {
+  input.toUpperCase();
+  String output = "";
+  for (int i = 0; i < input.length(); i++) {
+    char c = input.charAt(i);
+    int index = alphabet.indexOf(c);
+    if (index == -1) { // Zeichen nicht im Alphabet, unverändert belassen (z.B. Leerzeichen?)
+      output += c;
+    } else {
+      output += key.charAt(index);
+    }
+  }
+  return output;
+}
+
 void setup() {
+
+  Serial.begin(9600);
+  while (!Serial);
+  Serial.println("Start");
+
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
+  // WLAN verbinden mit Timeout
   WiFi.begin(SSID, PASSWORT);
   unsigned long startAttemptTime = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 20000) {
     delay(500);
   }
   if (WiFi.status() != WL_CONNECTED) {
-    errorBlink(1);
+    errorBlink(1); // Fehlercode 1: WLAN-Fehler
   }
 
+  // API-Healthcheck
   if (!checkApiHealth()) {
-    errorBlink(4);
+    errorBlink(4); // Fehlercode 4: API nicht erreichbar
   }
 
   Wire.begin();
 
+  // Automatische Sensor-Erkennung
   byte sensorAddress = 0;
   byte possibleAddresses[] = {0x76, 0x77};
   bool sensorFound = false;
@@ -171,12 +163,12 @@ void setup() {
   }
 
   if (!sensorFound) {
-    errorBlink(2);
+    errorBlink(2); // Fehlercode 2: Sensor nicht gefunden
   }
 
   iaqSensor.begin(sensorAddress, Wire);
   if (iaqSensor.bsecStatus != BSEC_OK) {
-    errorBlink(3);
+    errorBlink(3); // Fehlercode 3: Sensor-Init fehlgeschlagen
   }
 
   bsec_virtual_sensor_t sensorList[] = {
@@ -193,53 +185,67 @@ void setup() {
     timeClient.forceUpdate();
   }
 
-  digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(LED_BUILTIN, HIGH); // Alles bereit – LED dauerhaft an
 }
 
 void loop() {
   if (iaqSensor.run()) {
+    // Kurzes LED-Blink zur Messanzeige
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+
     float temperature = clampValue(iaqSensor.temperature);
     float humidity = clampValue(iaqSensor.humidity);
     float voc = clampValue(iaqSensor.iaq);
     float gas = clampValue(iaqSensor.gasResistance / 1000.0);
     float pressure = iaqSensor.pressure / 100.0;
-
     String timestamp = getTimestamp();
 
-    String jsonPayload = "{";
-    jsonPayload += "\"timestamp\": \"" + timestamp + "\",";
-    jsonPayload += "\"temperature\": " + String(temperature, 3) + ",";
-    jsonPayload += "\"humidity\": " + String(humidity, 3) + ",";
-    jsonPayload += "\"pressure\": " + String(pressure, 3) + ",";
-    jsonPayload += "\"voc\": " + String(voc, 3) + ",";
-    jsonPayload += "\"gas\": " + String(gas, 3);
-    jsonPayload += "}";
+    // Werte in Strings mit z.B. 3 Dezimalstellen
+    String temperatureStr = String(temperature, 3);
+    String humidityStr = String(humidity, 3);
+    String vocStr = String(voc, 3);
+    String gasStr = String(gas, 3);
+    String pressureStr = String(pressure, 3);
 
-    String encryptedPayload = encryptAndBase64(jsonPayload);
+    // Alle Strings verschlüsseln (substituieren)
+    String encryptedTimestamp = substituteString(timestamp, ALPHABET, KEY);
+    String encryptedTemperature = substituteString(temperatureStr, ALPHABET, KEY);
+    String encryptedHumidity = substituteString(humidityStr, ALPHABET, KEY);
+    String encryptedVoc = substituteString(vocStr, ALPHABET, KEY);
+    String encryptedGas = substituteString(gasStr, ALPHABET, KEY);
+    String encryptedPressure = substituteString(pressureStr, ALPHABET, KEY);
 
+    // JSON-Payload mit verschlüsselten Strings
+    String payload = "{";
+    payload += "\"timestamp\": \"" + encryptedTimestamp + "\",";
+    payload += "\"temperature\": \"" + encryptedTemperature + "\",";
+    payload += "\"humidity\": \"" + encryptedHumidity + "\",";
+    payload += "\"pressure\": \"" + encryptedPressure + "\",";
+    payload += "\"voc\": \"" + encryptedVoc + "\",";
+    payload += "\"gas\": \"" + encryptedGas + "\"";
+    payload += "}";
+
+    // Sende Request
     String fullPath = String(API_ENDPOINT) + "?client=" + CLIENT_ID;
-
     client.beginRequest();
     client.post(fullPath);
-    client.sendHeader("Content-Type", "text/plain");
+    client.sendHeader("Content-Type", "application/json");
     client.sendHeader("token", API_TOKEN);
-    client.sendHeader("Content-Length", encryptedPayload.length());
+    client.sendHeader("Content-Length", payload.length());
     client.beginBody();
-    client.print(encryptedPayload);
+    client.print(payload);
     client.endRequest();
 
+    Serial.println(payload);
+    Serial.println(fullPath);
+
     int statusCode = client.responseStatusCode();
-    client.responseBody();
+    String response = client.responseBody();
+    Serial.println(statusCode);
+    Serial.println(response);
 
-    if (statusCode == 200) {
-      digitalWrite(LED_BUILTIN, LOW);
-      delay(100);
-      digitalWrite(LED_BUILTIN, HIGH);
-    }
-
-    if (statusCode < 200 || statusCode >= 300) {
-      digitalWrite(LED_BUILTIN, LOW);
-    }
   }
 
   delay(sendInterval);
