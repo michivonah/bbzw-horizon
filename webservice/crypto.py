@@ -9,3 +9,7 @@ def hash_password(password: str) -> str:
 def generate_new_token(length: int = 32) -> str:
     """Generiert einen neuen sicheren Token."""
     return secrets.token_hex(length)  # Erzeugt einen sicheren Token
+
+def substitute_string_reverse(s: str, alphabet: str, key: str) -> str:
+    reverse_map = {k: a for a, k in zip(alphabet, key)}
+    return "".join(reverse_map.get(ch.upper(), ch) for ch in s)

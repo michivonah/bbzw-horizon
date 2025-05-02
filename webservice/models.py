@@ -55,4 +55,12 @@ class SensorData(SQLModel, table=True):
     clientid: int = Field(default=None, nullable=True)
 
 class EncryptedPayload(BaseModel):
-    data: str 
+    data: str
+
+class SensorDataEncryptedIn(BaseModel):
+    timestamp: str = Field(...)
+    temperature: Optional[str] = None
+    humidity: Optional[str] = None
+    pressure: Optional[str] = None
+    voc: Optional[str] = None
+    gas: Optional[str] = None
