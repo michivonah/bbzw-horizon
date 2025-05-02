@@ -53,3 +53,6 @@ class SensorData(SQLModel, table=True):
     voc: float = Field(default=None, nullable=True)
     gas: float = Field(default=None, nullable=True)
     clientid: int = Field(default=None, nullable=True)
+
+class EncryptedPayload(BaseModel):
+    data: str 

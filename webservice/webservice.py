@@ -6,9 +6,24 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 from dbfunctions import List, Optional, get_db, save_sensor_data, get_client_id_by_name, validate_token_with_access, engine, save_token_to_db, get_recent_sensor_data, get_all_clients
-from models import SensorDataIn, SensorData, MessageOnly, User, Client, ClientCreate, TokenResponse, Session as SessionModel
+from models import EncryptedPayload, SensorDataIn, SensorData, MessageOnly, User, Client, ClientCreate, TokenResponse, Session as SessionModel
 from datetime import datetime, timedelta
 from crypto import hash_password, generate_new_token
+from Crypto.Cipher import AES
+import base64
+
+
+AES_KEY = bytes([0x27, 0x9A, 0xB3, 0x11, 0xE7, 0x3D, 0xCC, 0x88,
+                 0x55, 0x10, 0x9F, 0x4A, 0x6B, 0x1D, 0x20, 0x2F])
+
+def decrypt_base64_aes128(encrypted_b64: str) -> str:
+    encrypted_bytes = base64.b64decode(encrypted_b64)
+    cipher = AES.new(AES_KEY, AES.MODE_ECB)
+    decrypted = cipher.decrypt(encrypted_bytes)
+
+    # Entferne Null-Byte-Padding (falls verwendet)
+    return decrypted.rstrip(b"\0").decode("utf-8")
+
 
 ################ API ################
 app = FastAPI(
@@ -190,3 +205,31 @@ async def create_client(
     db.refresh(new_client)
 
     return MessageOnly(message="Client created successfully.")
+
+
+@app.post("/sensors/push-encrypted", response_model=MessageOnly, tags=["sensors"])
+async def save_encrypted_sensor_data(
+    client: str,
+    encrypted: EncryptedPayload,
+    db: Session = Depends(get_db),
+    auth: bool = Depends(authenticate_user)
+):
+    try:
+        decrypted_json = decrypt_base64_aes128(encrypted.data)
+
+        # Parse JSON zu Pydantic-Modell
+        data = SensorDataIn.model_validate_json(decrypted_json)
+
+        # Client-ID abrufen
+        client_id = get_client_id_by_name(db, client)
+        if client_id is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        sensor_data = SensorData(**data.dict())
+        sensor_data.clientid = client_id
+
+        save_sensor_data(db, sensor_data)
+
+        return MessageOnly(message="Encrypted sensor data saved successfully.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error decoding or saving: {str(e)}")
