@@ -21,6 +21,7 @@ services:
       - 8080:8080
     environment:
       - DB_CONNECTION_STRING=postgresql://bbzw-horizon:<PW>@db/bbzw-horizon
+      - CRYPTO_SUBSTITION_KEY=""
 
   frontend:
     build:
@@ -42,3 +43,11 @@ services:
     restart: unless-stopped
     user: 0:0
 
+  caddy:
+    image: caddy:2.10
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+    restart: unless-stopped
