@@ -31,23 +31,25 @@ services:
     ports:
       - 5173:3000
 
-  grafana-inp21b:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_DATABASE_TYPE=sqlite3
-      - GF_DATABASE_SQLITE3_PATH=/var/lib/grafana/grafana.db
-    volumes:
-      - ./grafana-inp21b:/var/lib/grafana
-    restart: unless-stopped
-    user: 0:0
+#  grafana-inp21b:
+#    image: grafana/grafana:latest
+#    ports:
+#      - "3000:3000"
+#    environment:
+#      - GF_DATABASE_TYPE=sqlite3
+#      - GF_DATABASE_SQLITE3_PATH=/var/lib/grafana/grafana.db
+#    volumes:
+#      - ./grafana-inp21b:/var/lib/grafana
+#    restart: unless-stopped
+#    user: 0:0
 
-  caddy:
-    image: caddy:2.10
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+  proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
     restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '81:81'
+    volumes:
+      - './nginx-proxy/letsencrypt:/etc/letsencrypt'
+      - './nginx-proxy/data:/data'
